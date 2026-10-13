@@ -1,0 +1,290 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Create project files
+        run: |
+          mkdir -p PhoneCleaner && cd PhoneCleaner
+          mkdir -p $(dirname settings.gradle.kts)
+          cat > settings.gradle.kts << 'EOF_FILE'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "PhoneCleaner"
+          include(":app")
+          EOF_FILE
+          mkdir -p $(dirname build.gradle.kts)
+          cat > build.gradle.kts << 'EOF_FILE'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF_FILE
+          mkdir -p $(dirname gradle.properties)
+          cat > gradle.properties << 'EOF_FILE'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF_FILE
+          mkdir -p $(dirname app/build.gradle.kts)
+          cat > app/build.gradle.kts << 'EOF_FILE'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.abdullah.cleaner"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.abdullah.cleaner"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF_FILE
+          mkdir -p $(dirname app/src/main/AndroidManifest.xml)
+          cat > app/src/main/AndroidManifest.xml << 'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+
+              <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+                  tools:ignore="QueryAllPackagesPermission" />
+              <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+              <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+                  tools:ignore="ProtectedPermissions" />
+
+              <application
+                  android:allowBackup="false"
+                  android:icon="@drawable/ic_launcher"
+                  android:roundIcon="@drawable/ic_launcher"
+                  android:label="منظف الهاتف"
+                  android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_FILE
+          mkdir -p $(dirname app/src/main/res/drawable/ic_launcher.xml)
+          cat > app/src/main/res/drawable/ic_launcher.xml << 'EOF_FILE'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#0F6E56" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#E1F5EE" android:pathData="M60,16 L34,60 L52,60 L46,92 L76,46 L58,46 Z"/>
+          </vector>
+          EOF_FILE
+          mkdir -p $(dirname app/src/main/java/com/abdullah/cleaner/MainActivity.kt)
+          cat > app/src/main/java/com/abdullah/cleaner/MainActivity.kt << 'EOF_FILE'
+          package com.abdullah.cleaner
+
+          import android.app.Activity
+          import android.app.ActivityManager
+          import android.app.AlertDialog
+          import android.app.AppOpsManager
+          import android.app.usage.StorageStatsManager
+          import android.content.Intent
+          import android.content.pm.ApplicationInfo
+          import android.net.Uri
+          import android.os.Bundle
+          import android.os.Process
+          import android.os.storage.StorageManager
+          import android.provider.Settings
+          import android.view.Gravity
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.ScrollView
+          import android.widget.TextView
+          import android.widget.Toast
+          import java.io.File
+
+          class MainActivity : Activity() {
+
+              private lateinit var log: TextView
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(20), dp(40), dp(20), dp(20))
+                  }
+                  root.addView(TextView(this).apply {
+                      text = "منظف ومسرّع الهاتف"
+                      textSize = 24f
+                      gravity = Gravity.CENTER
+                      setPadding(0, 0, 0, dp(20))
+                  })
+                  root.addView(button("⚡ تسريع الآن (إغلاق الخلفية + مسح الكاش)") { boost() })
+                  root.addView(button("🧹 كاش التطبيقات (الأكبر أولًا)") { showCache() })
+                  root.addView(button("🕵️ التطبيقات المخفية (بدون أيقونة)") { showHidden() })
+                  log = TextView(this).apply {
+                      textSize = 15f
+                      setPadding(0, dp(16), 0, 0)
+                  }
+                  root.addView(log)
+
+                  setContentView(ScrollView(this).apply { addView(root) })
+              }
+
+              // ---------- 1) Boost: stop background processes + clear own cache ----------
+              private fun boost() {
+                  val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+                  var n = 0
+                  for (a in packageManager.getInstalledApplications(0)) {
+                      if (a.packageName == packageName) continue
+                      if (a.flags and ApplicationInfo.FLAG_STOPPED != 0) continue
+                      am.killBackgroundProcesses(a.packageName)
+                      n++
+                  }
+                  var freed = deleteContents(cacheDir)
+                  externalCacheDir?.let { freed += deleteContents(it) }
+
+                  log.text = "✔ تم إيقاف عمليات الخلفية لـ $n تطبيقًا.\n" +
+                      "✔ تم مسح كاش هذا التطبيق (${fmt(freed)}).\n\n" +
+                      "ملاحظة: أندرويد يعيد تشغيل بعض التطبيقات تلقائيًا، وهذا طبيعي. " +
+                      "لمسح كاش بقية التطبيقات استخدم الزر الثاني."
+              }
+
+              // ---------- 2) Cache sizes of all apps; tap an app to clear its cache ----------
+              private fun showCache() {
+                  if (!hasUsageAccess()) {
+                      Toast.makeText(
+                          this,
+                          "فعّل «الوصول إلى بيانات الاستخدام» لهذا التطبيق ثم ارجع واضغط الزر مرة أخرى",
+                          Toast.LENGTH_LONG
+                      ).show()
+                      startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                      return
+                  }
+                  val ssm = getSystemService(STORAGE_STATS_SERVICE) as StorageStatsManager
+                  val pm = packageManager
+                  val list = pm.getInstalledApplications(0).mapNotNull { a ->
+                      try {
+                          val st = ssm.queryStatsForPackage(
+                              StorageManager.UUID_DEFAULT, a.packageName, Process.myUserHandle()
+                          )
+                          Triple(a.packageName, pm.getApplicationLabel(a).toString(), st.cacheBytes)
+                      } catch (e: Exception) {
+                          null
+                      }
+                  }.filter { it.third > 1024 * 100 }
+                      .sortedByDescending { it.third }
+                      .take(40)
+
+                  if (list.isEmpty()) {
+                      Toast.makeText(this, "لا يوجد كاش يُذكر", Toast.LENGTH_SHORT).show()
+                      return
+                  }
+                  val total = list.sumOf { it.third }
+                  val items = list.map { "${it.second}  —  ${fmt(it.third)}" }.toTypedArray()
+
+                  AlertDialog.Builder(this)
+                      .setTitle("إجمالي الكاش: ${fmt(total)}")
+                      .setItems(items) { _, i ->
+                          // Android does not let apps clear other apps' cache, so open the app's
+                          // settings page: Storage -> Clear cache
+                          startActivity(
+                              Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                                  .setData(Uri.parse("package:${list[i].first}"))
+                          )
+                          Toast.makeText(this, "التخزين ← مسح الكاش", Toast.LENGTH_LONG).show()
+                      }
+                      .setNegativeButton("إغلاق", null)
+                      .show()
+              }
+
+              // ---------- 3) User-installed apps with no launcher icon ----------
+              private fun showHidden() {
+                  val pm = packageManager
+                  val list = pm.getInstalledApplications(0).filter {
+                      (it.flags and ApplicationInfo.FLAG_SYSTEM) == 0 &&
+                          it.packageName != packageName &&
+                          pm.getLaunchIntentForPackage(it.packageName) == null
+                  }
+                  if (list.isEmpty()) {
+                      Toast.makeText(this, "لا توجد تطبيقات مخفية", Toast.LENGTH_SHORT).show()
+                      return
+                  }
+                  val items = list.map { "${pm.getApplicationLabel(it)}\n${it.packageName}" }.toTypedArray()
+
+                  AlertDialog.Builder(this)
+                      .setTitle("تطبيقات بلا أيقونة (راجع الاسم قبل الحذف)")
+                      .setItems(items) { _, i ->
+                          // The system shows its own confirmation dialog
+                          startActivity(
+                              Intent(Intent.ACTION_DELETE, Uri.parse("package:${list[i].packageName}"))
+                          )
+                      }
+                      .setNegativeButton("إغلاق", null)
+                      .show()
+              }
+
+              // ---------- helpers ----------
+              private fun hasUsageAccess(): Boolean {
+                  val ops = getSystemService(APP_OPS_SERVICE) as AppOpsManager
+                  val mode = ops.checkOpNoThrow(
+                      AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), packageName
+                  )
+                  return mode == AppOpsManager.MODE_ALLOWED
+              }
+
+              private fun deleteContents(dir: File): Long {
+                  var size = 0L
+                  dir.listFiles()?.forEach { c ->
+                      if (c.isDirectory) size += deleteContents(c)
+                      size += c.length()
+                      c.delete()
+                  }
+                  return size
+              }
+
+              private fun fmt(b: Long): String =
+                  if (b >= 1048576) "%.1f MB".format(b / 1048576.0) else "${b / 1024} KB"
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              private fun button(t: String, onClick: () -> Unit) = Button(this).apply {
+                  text = t
+                  setOnClickListener { onClick() }
+              }
+          }
+          EOF_FILE
+      - name: Build
+        run: cd PhoneCleaner && gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneCleaner-apk
+          path: PhoneCleaner/app/build/outputs/apk/debug/app-debug.apk
